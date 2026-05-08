@@ -1,4 +1,6 @@
 # SteamPlaylogViewerについて
+
+[Download](https://github.com/QK777/SteamPlaylogViewer/releases/download/v1.0.1/SteamPlaylogViewer.zip)
   
 Steamのログ gameprocess_log.txt を読み取り、ゲームの 開始 / 終了 / プレイ時間 / ゲーム名 / AppID を一覧表示するWindows用アプリです。  
   
