@@ -1,0 +1,11 @@
+<Window x:Class="SteamPlaylogViewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="SteamPlaylogViewer" Width="1280" Height="820"
+        WindowStartupLocation="CenterScreen"
+        Background="#1e1e1e" Foreground="#d4d4d4">
+  <Grid Margin="0">
+    <wv2:WebView2 x:Name="Web" />
+  </Grid>
+</Window>

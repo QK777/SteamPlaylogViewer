@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Steam gameprocess_log ビューア</title>
+  <style>
+    :root{
+      color-scheme: dark;
+      --bg: #1e1e1e;
+      --panel: #252526;
+      --surface: #1e1e1e;
+      --input: #3c3c3c;
+      --fg: #d4d4d4;
+      --muted: #9da5b4;
+      --border: #3c3c3c;
+      --border2: #2a2a2a;
+      --accent: #007acc;
+      --accentSoft: rgba(0,122,204,.12);
+      --ripple: rgba(0,122,204,.35);
+    }
+    html, body { height:100%; }
+    body{
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+      background:var(--bg); color:var(--fg); margin:0;
+      display:flex; flex-direction:column; overflow:hidden;
+    }
+    header{
+      padding: 10px 12px 10px;
+      border-bottom:1px solid var(--border);
+      background:var(--panel);
+      position:sticky; top:0; z-index:10;
+    }
+    .row{ display:flex; gap:12px; flex-wrap:wrap; align-items:center; }
+
+    button{
+      position:relative;
+      background:#2d2d30;
+      border:1px solid var(--border);
+      color:var(--fg);
+      border-radius:10px;
+      padding:10px 12px;
+      cursor:pointer;
+      overflow:hidden;
+      transition: transform .06s ease, border-color .12s ease;
+      display:inline-flex; align-items:center; gap:8px;
+      user-select:none;
+    }
+    button:hover{ border-color:var(--accent); }
+    button:active{ transform: translateY(1px); }
+    button:disabled{ opacity:.5; cursor:not-allowed; }
+
+    .ripple{
+      position:absolute; border-radius:999px; transform: scale(0);
+      animation: ripple .55s ease-out; background: var(--ripple);
+      pointer-events:none;
+    }
+    @keyframes ripple{ to{ transform: scale(14); opacity:0; } }
+    button.busy{ pointer-events:none; border-color:var(--accent); box-shadow: 0 0 0 3px var(--accentSoft) inset; }
+    .spinner{
+      display:none; width:14px; height:14px; border-radius:50%;
+      border:2px solid rgba(212,212,212,.25);
+      border-top-color: rgba(212,212,212,.85);
+      animation: spin .8s linear infinite;
+    }
+    button.busy .spinner{ display:inline-block; }
+    @keyframes spin{ to{ transform: rotate(360deg); } }
+
+    main{ flex:1 1 auto; overflow:hidden; display:flex; }
+    .tablecard{
+      flex:1 1 auto;
+      margin: 10px 12px 12px;
+      background:var(--surface);
+      border:1px solid var(--border);
+      border-radius:12px;
+      overflow:auto;
+      min-height:0;
+    }
+    table{ width:100%; border-collapse:collapse; table-layout:auto; }
+    th, td{ border-bottom:1px solid var(--border2); padding:10px 8px; vertical-align:top; }
+    th{
+      text-align:left; font-size:12px; color:var(--muted);
+      position:sticky; top:0; z-index:2; background:var(--panel);
+      user-select:none; cursor:pointer; white-space:nowrap;
+    }
+    th .sort{ margin-left:6px; opacity:.75; font-size:11px; }
+
+    .mono{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; }
+    .nowrap{ white-space:nowrap; overflow-wrap:normal; word-break:normal; }
+    .pill{ display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--border); color:var(--fg); font-size:12px; white-space:nowrap; }
+
+    /* Column sizing: time/dur/appid fit, game takes the rest */
+    th:nth-child(1), td:nth-child(1),
+    th:nth-child(2), td:nth-child(2),
+    th:nth-child(3), td:nth-child(3),
+    th:nth-child(5), td:nth-child(5){
+      width: 1%;
+      white-space: nowrap;
+    }
+    th:nth-child(4), td:nth-child(4){
+      width: auto;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    /* More left/right padding for Start/End/Duration */
+    th:nth-child(1), td:nth-child(1),
+    th:nth-child(2), td:nth-child(2),
+    th:nth-child(3), td:nth-child(3){
+      padding-left: 12px;
+      padding-right: 12px;
+    }
+
+    /* GitHub-like toast */
+    .copy-tip{
+      position: fixed; z-index: 20000;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--fg);
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 10px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.45);
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity .12s ease, transform .12s ease;
+      pointer-events: none;
+      max-width: 70vw;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .copy-tip.show{ opacity: 1; transform: translateY(0); }
+    .copy-tip::after{ content:""; position:absolute; left:14px; top:100%; border:6px solid transparent; border-top-color:var(--border); }
+    .copy-tip::before{ content:""; position:absolute; left:14px; top:100%; transform: translateY(-1px); border:6px solid transparent; border-top-color:var(--panel); }
+  </style>
+</head>
+
+<body>
+<header>
+  <div class="row">
+    <button id="exportBtn" disabled title="表示中（並び順）のCSVを出力">
+      <span class="spinner"></span><span>CSV出力</span>
+    </button>
+    <button id="resetBtn" title="Steam gameprocess_log を再読み込み">
+      <span class="spinner"></span><span>リセット</span>
+    </button>
+  </div>
+</header>
+
+<main>
+  <div class="tablecard">
+    <table>
+      <thead>
+        <tr>
+          <th data-key="startMs">開始日時<span class="sort" id="sort-startMs"></span></th>
+          <th data-key="endMs">終了日時<span class="sort" id="sort-endMs"></span></th>
+          <th data-key="durMs">プレイ時間<span class="sort" id="sort-durMs"></span></th>
+          <th data-key="game">ゲーム名<span class="sort" id="sort-game"></span></th>
+          <th data-key="appid">AppID<span class="sort" id="sort-appid"></span></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+</main>
+
+<script>
+  const $exportBtn = document.getElementById('exportBtn');
+  const $resetBtn  = document.getElementById('resetBtn');
+  const $tbody     = document.getElementById('tbody');
+
+  let sessions = [];
+  let sortKey = 'startMs';
+  let sortDir = 'desc';
+
+  function addRipple(e){
+    const btn = e.currentTarget;
+    if (btn.disabled) return;
+    const rect = btn.getBoundingClientRect();
+    const size = Math.max(rect.width, rect.height);
+    const x = e.clientX - rect.left - size/2;
+    const y = e.clientY - rect.top - size/2;
+    const span = document.createElement('span');
+    span.className = 'ripple';
+    span.style.width = span.style.height = size + 'px';
+    span.style.left = x + 'px';
+    span.style.top = y + 'px';
+    btn.appendChild(span);
+    span.addEventListener('animationend', () => span.remove(), { once:true });
+  }
+  function setBusy(btn, on){ btn.classList.toggle('busy', !!on); }
+
+  function showTipNear(el, text = "OK") {
+    const tip = document.createElement("div");
+    tip.className = "copy-tip";
+    tip.textContent = text;
+    document.body.appendChild(tip);
+
+    const r = el.getBoundingClientRect();
+    tip.style.left = `${Math.max(8, r.left)}px`;
+    tip.style.top  = `${Math.max(8, r.top - 40)}px`;
+
+    requestAnimationFrame(() => tip.classList.add("show"));
+    setTimeout(() => {
+      tip.classList.remove("show");
+      setTimeout(() => tip.remove(), 160);
+    }, 1200);
+  }
+  window.showTipNear = showTipNear;
+
+  function parseLine(line){
+    let m = line.match(/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.\d+)?\]\s+(.*)$/);
+    if (m) return { ts: m[1], msg: m[2] };
+    m = line.match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\.\d+)?\s+(.*)$/);
+    if (m) return { ts: m[1], msg: m[2] };
+    return null;
+  }
+  function toMs(ts){
+    if (!ts) return null;
+    const d = new Date(ts.replace(' ', 'T'));
+    const t = d.getTime();
+    return Number.isFinite(t) ? t : null;
+  }
+  function fmtDur(ms){
+    if (ms == null || !isFinite(ms) || ms < 0) return '';
+    const s = Math.floor(ms/1000);
+    const hh = Math.floor(s/3600);
+    const mm = Math.floor((s%3600)/60);
+    const ss = s%60;
+    return `${hh.toString().padStart(2,'0')}:${mm.toString().padStart(2,'0')}:${ss.toString().padStart(2,'0')}`;
+  }
+  function basename(path){
+    const p = (path||'').replace(/^"+|"+$/g,'');
+    const parts = p.split(/[/\\]/);
+    return parts[parts.length - 1] || p;
+  }
+  function guessGameNameFromCmd(cmd){
+    const cleaned = (cmd||'').replace(/^"+|"+$/g,'');
+    const m = cleaned.match(/steamapps[\/\\]common[\/\\]([^\/\\]+)[\/\\]/i);
+    if (m) return m[1];
+    const exe = basename(cleaned.split(' ')[0]);
+    return exe.replace(/\.exe$/i,'') || '(unknown)';
+  }
+  function isHelperProcess(cmd){
+    const c = (cmd||'').toLowerCase();
+    return c.includes('unitycrashhandler') || c.includes('crashpad_handler') || c.includes('werfault');
+  }
+  function pickPrimaryCmd(processes){
+    const exes = processes
+      .map(p => p.cmd || '')
+      .filter(cmd => /\.exe\b/i.test(cmd))
+      .sort((a,b) => (isHelperProcess(a) - isHelperProcess(b)));
+    const common = exes.find(cmd => /steamapps[\/\\]common/i.test(cmd) && !isHelperProcess(cmd));
+    return common || exes.find(cmd => !isHelperProcess(cmd)) || exes[0] || '';
+  }
+  function parseSessions(text){
+    const lines = text.split(/\r?\n/);
+    const active = new Map();
+    const out = [];
+
+    for (const raw of lines){
+      const rec = parseLine(raw);
+      if (!rec) continue;
+
+      let m = rec.msg.match(/^AppID\s+(\d+)\s+adding PID\s+(\d+)\s+as a tracked process\s+(.*)$/);
+      if (m){
+        const appid = m[1];
+        const cmd = m[3];
+        if (!active.has(appid)) active.set(appid, { appid, startTs: rec.ts, processes: [] });
+        active.get(appid).processes.push({ cmd });
+        continue;
+      }
+
+      m = rec.msg.match(/^Remove\s+(\d+)\s+from running list\s*$/);
+      if (m){
+        const appid = m[1];
+        const s = active.get(appid);
+        if (s){
+          const primaryCmd = pickPrimaryCmd(s.processes);
+          const game = guessGameNameFromCmd(primaryCmd);
+          const startMs = toMs(s.startTs);
+          const endMs = toMs(rec.ts);
+          out.push({ appid, game, start: s.startTs, end: rec.ts, startMs, endMs, durMs: (startMs!=null&&endMs!=null)?(endMs-startMs):null });
+          active.delete(appid);
+        } else {
+          const endMs = toMs(rec.ts);
+          out.push({ appid, game:'(unknown)', start:'', end:rec.ts, startMs:null, endMs, durMs:null });
+        }
+      }
+    }
+
+    for (const s of active.values()){
+      const primaryCmd = pickPrimaryCmd(s.processes);
+      const game = guessGameNameFromCmd(primaryCmd);
+      const startMs = toMs(s.startTs);
+      out.push({ appid:s.appid, game, start:s.startTs, end:'', startMs, endMs:null, durMs:null });
+    }
+    return out;
+  }
+
+  function escapeHtml(str){
+    return (str ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function updateSortIndicators(){
+    for (const k of ['startMs','endMs','durMs','game','appid']){
+      const el = document.getElementById('sort-' + k);
+      if (!el) continue;
+      el.textContent = (k === sortKey) ? ((sortDir === 'asc') ? '▲' : '▼') : '';
+    }
+  }
+  function getViewSessions(){
+    const dirMul = (sortDir === 'asc') ? 1 : -1;
+    return [...sessions].sort((a,b) => {
+      const ka=a[sortKey], kb=b[sortKey];
+      const aNil=(ka==null||ka===''), bNil=(kb==null||kb==='');
+      if (aNil && bNil) return 0;
+      if (aNil) return 1;
+      if (bNil) return -1;
+      if (sortKey==='game') return String(ka).localeCompare(String(kb),'ja')*dirMul;
+      if (sortKey==='appid') return (Number(ka)-Number(kb))*dirMul;
+      return (Number(ka)-Number(kb))*dirMul;
+    });
+  }
+  function render(){
+    const view=getViewSessions();
+    $tbody.innerHTML='';
+    for (const s of view){
+      const tr=document.createElement('tr');
+      tr.innerHTML = `
+        <td class="mono nowrap">${escapeHtml(s.start||'')}</td>
+        <td class="mono nowrap">${escapeHtml(s.end||'')}</td>
+        <td class="mono nowrap">${s.durMs!=null?escapeHtml(fmtDur(s.durMs)):''}</td>
+        <td>${s.game?`<span class="pill">${escapeHtml(s.game)}</span>`:''}</td>
+        <td class="mono nowrap" style="text-align:right;">${escapeHtml(String(s.appid||''))}</td>
+      `;
+      $tbody.appendChild(tr);
+    }
+    $exportBtn.disabled = (view.length===0);
+    updateSortIndicators();
+  }
+
+  document.querySelectorAll('th[data-key]').forEach(th => {
+    th.addEventListener('click', () => {
+      const key = th.getAttribute('data-key');
+      if (!key) return;
+      if (sortKey === key) sortDir = (sortDir === 'asc') ? 'desc' : 'asc';
+      else { sortKey = key; sortDir = (key==='game'||key==='appid') ? 'asc' : 'desc'; }
+      render();
+    });
+  });
+
+  function csvEscape(s){
+    s = (s ?? '').replaceAll('"','""');
+    return `"${s}"`;
+  }
+  function buildCsv(){
+    const view = getViewSessions();
+    const header = ['start','end','duration_hhmmss','game_guess','appid'];
+    const out = [header.map(csvEscape).join(',')];
+    for(const s of view){
+      out.push([
+        s.start||'',
+        s.end||'',
+        s.durMs!=null?fmtDur(s.durMs):'',
+        s.game||'',
+        String(s.appid||'')
+      ].map(csvEscape).join(','));
+    }
+    return out.join('\n');
+  }
+
+  // Host calls this after reading the log file
+  async function loadTextAndParse(text, label){
+    sessions = parseSessions(text);
+    render();
+  }
+  window.loadTextAndParse = loadTextAndParse;
+
+  $exportBtn.addEventListener('click', (e) => {
+    addRipple(e);
+    if ($exportBtn.disabled) return;
+    try{
+      const csv = buildCsv();
+      if(window.chrome && chrome.webview){
+        chrome.webview.postMessage(JSON.stringify({ type:'exportCsv', csv }));
+      }
+    }catch(err){
+      showTipNear($exportBtn, err?.message ?? 'CSV失敗');
+    }
+  });
+
+  $resetBtn.addEventListener('click', (e) => {
+    addRipple(e);
+    try{
+      if(window.chrome && chrome.webview){
+        chrome.webview.postMessage(JSON.stringify({ type:'reset' }));
+      }
+    }catch(_){}
+  });
+</script>
+</body>
+</html>
